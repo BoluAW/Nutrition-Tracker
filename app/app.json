@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Nutrition Tracker",
+    "slug": "nutrition-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "nutritiontracker",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0E1116",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nutritiontracker.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Take a photo of your meal so the AI can estimate its calories and protein.",
+        "NSPhotoLibraryUsageDescription": "Pick a photo of your meal so the AI can estimate its calories and protein.",
+        "NSUserTrackingUsageDescription": "This app does not track you."
+      }
+    },
+    "android": {
+      "package": "com.nutritiontracker.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0E1116",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pick a photo of your meal so the AI can estimate its calories and protein.",
+          "cameraPermission": "Take a photo of your meal so the AI can estimate its calories and protein."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#5B8DEF",
+          "defaultChannel": "reminders"
+        }
+      ]
+    ]
+  }
+}
