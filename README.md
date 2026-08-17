@@ -86,10 +86,14 @@ Tap **Log**, take a photo of your next meal, and it'll come back with an estimat
   is open and don't need the server running — but they do need the app installed and permission
   granted. On Android, notification permission is requested at runtime; if you deny it, flip the
   switch in Settings again to re-prompt.
-- **Expo Go vs a real build.** Everything here works in Expo Go for day-to-day personal use. If you
-  want a standalone app on your home screen that doesn't need Expo Go, run
-  `npx eas build --profile preview --platform android` (or `ios`) — you'll need a free Expo
-  account.
+- **The project is pinned to Expo SDK 54 on purpose.** Expo Go in the App Store is stuck at SDK 54
+  (Apple hasn't approved Expo's newer submissions), so anything newer refuses to open with
+  "Project is incompatible with this version of Expo Go". Don't bump the SDK until either the App
+  Store catches up or you've moved to a development build.
+- **Expo Go vs a real build.** Everything here works in Expo Go for day-to-day personal use. For a
+  standalone app on your home screen — no Expo Go, no SDK version-locking — run
+  `npx eas build --profile development --platform ios` (or `android`); you'll need a free Expo
+  account. That's also the way back onto a current SDK.
 - **The estimates are estimates.** The AI is good at recognising food and reasonable at portions,
   but it can't see the oil in the pan. Treat the numbers as close-enough for tracking trends, and
   use the adjust buttons when you know better.
