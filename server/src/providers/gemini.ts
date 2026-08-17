@@ -83,8 +83,15 @@ export function createGeminiAnalyzer(apiKey: string, model: string): Analyzer {
 function translateError(err: unknown): AnalyzerError {
   if (err instanceof ApiError) {
     if (err.status === 429) {
+      // Google names the exact quota that tripped (per-minute vs per-day) in the
+      // raw error, and the two mean very different things to someone waiting:
+      // seconds versus tomorrow. Log it so the terminal can answer that.
+      console.warn('[gemini quota]', err.message);
+      const perDay = /PerDay|per day/i.test(err.message);
       return new AnalyzerError(
-        "You've hit Gemini's rate limit. The free tier allows a limited number of requests per minute and per day — wait a moment and try again.",
+        perDay
+          ? "You've used up today's Gemini free-tier quota. It resets on a daily cycle — or set ANTHROPIC_API_KEY and PROVIDER=claude in .env to keep going now."
+          : "You've hit Gemini's per-minute rate limit. Wait about a minute and try again.",
         429,
       );
     }
