@@ -1,23 +1,18 @@
-import Anthropic from '@anthropic-ai/sdk';
 import cors from 'cors';
 import express from 'express';
 
-import { analyzePhoto, analyzeText, type AnalyzerConfig } from './nutrition.js';
+import { createAnalyzer } from './analyzer.js';
+import { AnalyzerError } from './schema.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-opus-5';
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error(
-    'ANTHROPIC_API_KEY is not set. Copy .env.example to .env, add your key, and start again.',
-  );
+let analyzer;
+try {
+  analyzer = createAnalyzer();
+} catch (err) {
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 }
-
-const config: AnalyzerConfig = {
-  client: new Anthropic(),
-  model: MODEL,
-};
 
 const app = express();
 app.use(cors());
@@ -26,7 +21,7 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, model: MODEL });
+  res.json({ ok: true, provider: analyzer.provider, model: analyzer.model });
 });
 
 app.post('/analyze/text', async (req, res) => {
@@ -41,7 +36,7 @@ app.post('/analyze/text', async (req, res) => {
   }
 
   try {
-    res.json(await analyzeText(config, description));
+    res.json(await analyzer.analyzeText(description));
   } catch (err) {
     handleError(res, err);
   }
@@ -58,35 +53,30 @@ app.post('/analyze/photo', async (req, res) => {
   }
 
   try {
-    // The app sends raw base64, but strip a data: prefix in case a browser client
-    // sends the full data URI.
+    // The app sends raw base64, but strip a data: prefix in case a browser
+    // client sends the full data URI.
     const data = image.includes(',') ? image.slice(image.indexOf(',') + 1) : image;
-    res.json(await analyzePhoto(config, data, mimeType, hint));
+    res.json(await analyzer.analyzePhoto(data, mimeType, hint));
   } catch (err) {
     handleError(res, err);
   }
 });
 
 function handleError(res: express.Response, err: unknown): void {
-  if (err instanceof Anthropic.RateLimitError) {
-    res.status(429).json({ error: 'Rate limited by the Claude API. Wait a moment and try again.' });
-    return;
-  }
-  if (err instanceof Anthropic.AuthenticationError) {
-    res.status(401).json({ error: 'The ANTHROPIC_API_KEY on the server is missing or invalid.' });
-    return;
-  }
-  if (err instanceof Anthropic.APIConnectionError) {
-    res.status(502).json({ error: "The server couldn't reach the Claude API." });
+  if (err instanceof AnalyzerError) {
+    if (err.status >= 500) console.error('[analyze]', err.message);
+    res.status(err.status).json({ error: err.message });
     return;
   }
 
-  const message = err instanceof Error ? err.message : 'Unknown error analyzing the meal.';
   console.error('[analyze]', err);
+  const message = err instanceof Error ? err.message : 'Unknown error analyzing the meal.';
   res.status(500).json({ error: message });
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Nutrition analyzer listening on http://0.0.0.0:${PORT} (model: ${MODEL})`);
-  console.log('Point the app at http://<this-machine-LAN-IP>:' + PORT);
+  console.log(
+    `Nutrition analyzer listening on http://0.0.0.0:${PORT} (${analyzer.provider}: ${analyzer.model})`,
+  );
+  console.log(`Point the app at http://<this-machine-LAN-IP>:${PORT}`);
 });

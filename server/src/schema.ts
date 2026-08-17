@@ -1,8 +1,13 @@
-import Anthropic from '@anthropic-ai/sdk';
+/**
+ * Everything both providers share: the output contract, the prompts, and the
+ * error type the HTTP layer maps to status codes. Adding a third provider means
+ * writing one file in ./providers and nothing else.
+ */
 
 /**
- * The shape the app expects back. Enforced by the API rather than by parsing
- * prose, so a malformed response is impossible rather than merely unlikely.
+ * Standard JSON Schema. Claude enforces it via structured outputs and Gemini via
+ * `responseJsonSchema`, so in both cases a malformed response is impossible
+ * rather than merely unlikely.
  */
 export const NUTRITION_SCHEMA = {
   type: 'object',
@@ -72,7 +77,7 @@ export type AnalysisResult = {
   note: string;
 };
 
-const SYSTEM_PROMPT = `You estimate the nutrition of meals for someone tracking their daily calories and protein.
+export const SYSTEM_PROMPT = `You estimate the nutrition of meals for someone tracking their daily calories and protein.
 
 Give a single best estimate. The person needs a number they can log in five seconds, not a range or a list of caveats — they would rather have a good guess now than a perfect one never.
 
@@ -88,84 +93,60 @@ Keep the note to one sentence naming your single biggest assumption, and leave i
 
 Item totals should add up to the meal totals.`;
 
-export type AnalyzerConfig = {
-  client: Anthropic;
-  model: string;
-};
-
-async function requestAnalysis(
-  { client, model }: AnalyzerConfig,
-  content: Anthropic.ContentBlockParam[],
-): Promise<AnalysisResult> {
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    // Portion estimation is judgment, not deep reasoning — low effort keeps the
-    // round trip short enough that logging a meal still feels instant.
-    output_config: {
-      effort: 'low',
-      format: { type: 'json_schema', schema: NUTRITION_SCHEMA },
-    },
-    messages: [{ role: 'user', content }],
-  });
-
-  if (response.stop_reason === 'refusal') {
-    throw new Error("The model declined to analyze that. Try describing the meal in words instead.");
-  }
-
-  const text = response.content.find((block) => block.type === 'text');
-  if (!text || text.type !== 'text') {
-    throw new Error('The model returned no analysis. Try again.');
-  }
-
-  return JSON.parse(text.text) as AnalysisResult;
+export function textPrompt(description: string): string {
+  return `Estimate the nutrition of this meal:\n\n${description}`;
 }
 
-/** Estimate nutrition from a sentence like "two eggs on toast with butter". */
-export function analyzeText(config: AnalyzerConfig, description: string): Promise<AnalysisResult> {
-  return requestAnalysis(config, [
-    {
-      type: 'text',
-      text: `Estimate the nutrition of this meal:\n\n${description}`,
-    },
-  ]);
+export function photoPrompt(hint?: string): string {
+  return hint
+    ? `Estimate the nutrition of the meal in this photo. The person adds: "${hint}"`
+    : 'Estimate the nutrition of the meal in this photo.';
+}
+
+/** Carries an HTTP status so the route layer doesn't need provider-specific knowledge. */
+export class AnalyzerError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'AnalyzerError';
+  }
+}
+
+/** What the routes depend on. Providers are interchangeable behind this. */
+export interface Analyzer {
+  readonly provider: string;
+  readonly model: string;
+  analyzeText(description: string): Promise<AnalysisResult>;
+  analyzePhoto(base64Image: string, mimeType: string, hint?: string): Promise<AnalysisResult>;
 }
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
-type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
 
-function normalizeMimeType(mimeType: string): SupportedImageType {
+/**
+ * Both providers accept the same four image types. The camera nearly always
+ * hands us JPEG, so assume it rather than rejecting a photo over an
+ * unrecognized label.
+ */
+export function normalizeMimeType(mimeType: string): string {
   const lower = mimeType.toLowerCase();
   if (lower === 'image/jpg') return 'image/jpeg';
-  if ((SUPPORTED_IMAGE_TYPES as readonly string[]).includes(lower)) {
-    return lower as SupportedImageType;
-  }
-  // The camera nearly always hands us JPEG; assume it rather than rejecting a
-  // photo over an unrecognized label.
-  return 'image/jpeg';
+  return (SUPPORTED_IMAGE_TYPES as readonly string[]).includes(lower) ? lower : 'image/jpeg';
 }
 
-/** Estimate nutrition from a photo, optionally with a typed hint from the user. */
-export function analyzePhoto(
-  config: AnalyzerConfig,
-  base64Image: string,
-  mimeType: string,
-  hint?: string,
-): Promise<AnalysisResult> {
-  const instruction = hint
-    ? `Estimate the nutrition of the meal in this photo. The person adds: "${hint}"`
-    : 'Estimate the nutrition of the meal in this photo.';
+/** Guards against a provider returning JSON that parses but isn't our shape. */
+export function parseResult(raw: string): AnalysisResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AnalyzerError('The model returned something that was not valid JSON.', 502);
+  }
 
-  return requestAnalysis(config, [
-    {
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: normalizeMimeType(mimeType),
-        data: base64Image,
-      },
-    },
-    { type: 'text', text: instruction },
-  ]);
+  const result = parsed as AnalysisResult;
+  if (typeof result?.calories !== 'number' || !Array.isArray(result?.items)) {
+    throw new AnalyzerError('The model returned JSON in an unexpected shape.', 502);
+  }
+  return result;
 }

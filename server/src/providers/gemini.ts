@@ -1,0 +1,95 @@
+import { ApiError, GoogleGenAI, type ContentListUnion } from '@google/genai';
+
+import {
+  AnalyzerError,
+  NUTRITION_SCHEMA,
+  SYSTEM_PROMPT,
+  normalizeMimeType,
+  parseResult,
+  photoPrompt,
+  textPrompt,
+  type AnalysisResult,
+  type Analyzer,
+} from '../schema.js';
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
+export function createGeminiAnalyzer(apiKey: string, model: string): Analyzer {
+  const ai = new GoogleGenAI({ apiKey });
+
+  async function run(contents: ContentListUnion): Promise<AnalysisResult> {
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          responseMimeType: 'application/json',
+          // `responseJsonSchema` takes standard JSON Schema, unlike the older
+          // `responseSchema` field which only accepts an OpenAPI subset — so the
+          // exact same schema object drives both providers.
+          responseJsonSchema: NUTRITION_SCHEMA,
+        },
+      });
+    } catch (err) {
+      throw translateError(err);
+    }
+
+    const text = response.text;
+    if (!text) {
+      // Usually means the safety filters blocked the response rather than a bug.
+      throw new AnalyzerError(
+        "Gemini returned no analysis. Try again, or describe the meal in words instead.",
+        502,
+      );
+    }
+    return parseResult(text);
+  }
+
+  return {
+    provider: 'gemini',
+    model,
+
+    analyzeText(description) {
+      return run([{ text: textPrompt(description) }]);
+    },
+
+    analyzePhoto(base64Image, mimeType, hint) {
+      return run([
+        { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Image } },
+        { text: photoPrompt(hint) },
+      ]);
+    },
+  };
+}
+
+function translateError(err: unknown): AnalyzerError {
+  if (err instanceof ApiError) {
+    if (err.status === 429) {
+      return new AnalyzerError(
+        "You've hit Gemini's rate limit. The free tier allows a limited number of requests per minute and per day — wait a moment and try again.",
+        429,
+      );
+    }
+    // Gemini reports a bad key as 400 API_KEY_INVALID rather than 401, so match
+    // on the reason as well as the status — otherwise the raw error JSON ends up
+    // in front of the user.
+    if (err.status === 401 || err.status === 403 || /API_KEY_INVALID|API key not valid/i.test(err.message)) {
+      return new AnalyzerError('The GEMINI_API_KEY on the server is missing or invalid.', 401);
+    }
+    if (/quota|RESOURCE_EXHAUSTED/i.test(err.message)) {
+      return new AnalyzerError(
+        "You've used up the Gemini free-tier quota for now. It resets on a daily cycle — wait and try again, or switch PROVIDER to claude in .env.",
+        429,
+      );
+    }
+    if (err.status === 400) {
+      return new AnalyzerError(`Gemini rejected the request: ${err.message}`, 400);
+    }
+    return new AnalyzerError(`Gemini returned an error: ${err.message}`, 502);
+  }
+
+  const message = err instanceof Error ? err.message : 'Unknown error calling Gemini.';
+  return new AnalyzerError(message, 502);
+}
