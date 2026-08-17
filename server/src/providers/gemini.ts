@@ -12,7 +12,11 @@ import {
   type Analyzer,
 } from '../schema.js';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+// An alias rather than a pinned version: Google retires specific model ids for
+// new keys without warning (gemini-2.5-flash was already blocked when this was
+// written), and "latest" keeps working through that. Pin GEMINI_MODEL in .env if
+// you ever need a fixed version.
+export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
 
 export function createGeminiAnalyzer(apiKey: string, model: string): Analyzer {
   const ai = new GoogleGenAI({ apiKey });

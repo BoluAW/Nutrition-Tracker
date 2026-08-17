@@ -30,11 +30,24 @@ Everything you log is stored on the phone. Photos go to your own server for the 
 ```sh
 cd server
 npm install
-cp .env.example .env      # then paste your Anthropic API key into .env
+cp .env.example .env      # then paste an API key into .env
 npm run dev
 ```
 
-Get an API key at [console.anthropic.com](https://console.anthropic.com/settings/keys).
+The analyzer runs on either **Google Gemini** or **Anthropic Claude** — set one key in
+`.env` and it uses that one:
+
+| Provider   | Key in `.env`       | Get one at                                                                    | Cost                     |
+| ---------- | ------------------- | ----------------------------------------------------------------------------- | ------------------------ |
+| **Gemini** | `GEMINI_API_KEY`    | [aistudio.google.com/apikey](https://aistudio.google.com/apikey)              | Free tier, no card       |
+| **Claude** | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/settings/keys)           | Paid, from ~$5 of credit |
+
+Gemini's free tier is capped per minute and per day, which is far more than personal meal
+logging needs. Claude costs a few cents a meal and is better at the genuinely hard part —
+judging portion sizes from a photo.
+
+Set both keys and you can flip `PROVIDER=gemini` / `PROVIDER=claude` to compare them on the
+same meal.
 
 It listens on port `8787`. You'll need this machine's address on your local network — not
 `localhost`, since the phone has to reach it:
@@ -80,5 +93,10 @@ Tap **Log**, take a photo of your next meal, and it'll come back with an estimat
 - **The estimates are estimates.** The AI is good at recognising food and reasonable at portions,
   but it can't see the oil in the pan. Treat the numbers as close-enough for tracking trends, and
   use the adjust buttons when you know better.
-- **Model.** The server uses `claude-opus-5` by default. Set `ANTHROPIC_MODEL` in `server/.env` to
-  use a different one — `claude-sonnet-5` is cheaper per photo if you're logging a lot.
+- **Model.** Defaults are `gemini-flash-latest` and `claude-opus-5`. Override with `GEMINI_MODEL`
+  or `ANTHROPIC_MODEL` in `server/.env`. The Gemini default is deliberately an alias rather than a
+  pinned version — Google retires specific model ids for new API keys without much warning, and
+  `-latest` keeps working through that.
+- **Adding another provider** is one file in `server/src/providers/` implementing the `Analyzer`
+  interface from `server/src/schema.ts`. The phone app talks to a fixed JSON contract, so it needs
+  no changes.
