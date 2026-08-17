@@ -18,26 +18,38 @@ import {
 // you ever need a fixed version.
 export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
 
+const RETRY_DELAYS_MS = [1500, 3000, 5000];
+const MAX_RETRIES = RETRY_DELAYS_MS.length;
+
 export function createGeminiAnalyzer(apiKey: string, model: string): Analyzer {
   const ai = new GoogleGenAI({ apiKey });
 
   async function run(contents: ContentListUnion): Promise<AnalysisResult> {
     let response;
-    try {
-      response = await ai.models.generateContent({
-        model,
-        contents,
-        config: {
-          systemInstruction: SYSTEM_PROMPT,
-          responseMimeType: 'application/json',
-          // `responseJsonSchema` takes standard JSON Schema, unlike the older
-          // `responseSchema` field which only accepts an OpenAPI subset — so the
-          // exact same schema object drives both providers.
-          responseJsonSchema: NUTRITION_SCHEMA,
-        },
-      });
-    } catch (err) {
-      throw translateError(err);
+    // The free tier returns 503 "high demand" often enough that a single
+    // attempt fails more often than it succeeds at busy times. Retrying two or
+    // three seconds later almost always works, and the user standing over their
+    // dinner never sees it.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            responseMimeType: 'application/json',
+            // `responseJsonSchema` takes standard JSON Schema, unlike the older
+            // `responseSchema` field which only accepts an OpenAPI subset — so
+            // the exact same schema object drives both providers.
+            responseJsonSchema: NUTRITION_SCHEMA,
+          },
+        });
+        break;
+      } catch (err) {
+        const overloaded = err instanceof ApiError && (err.status === 503 || err.status === 500);
+        if (!overloaded || attempt >= MAX_RETRIES) throw translateError(err);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+      }
     }
 
     const text = response.text;
@@ -90,6 +102,13 @@ function translateError(err: unknown): AnalyzerError {
     }
     if (err.status === 400) {
       return new AnalyzerError(`Gemini rejected the request: ${err.message}`, 400);
+    }
+    if (err.status === 503 || err.status === 500) {
+      // Only reached after the retries above were exhausted.
+      return new AnalyzerError(
+        'Gemini is busy right now and stayed busy through several retries. Wait a minute and try again.',
+        503,
+      );
     }
     return new AnalyzerError(`Gemini returned an error: ${err.message}`, 502);
   }
